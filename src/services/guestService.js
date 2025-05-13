@@ -1,8 +1,9 @@
 // src/services/guestService.js
-// 讀取本地 guests.csv 並查詢座位
+// 讀取賓客資料並查詢座位
 const fs = require('fs');
 const path = require('path');
 const config = require('../../config');
+const googleSheetsService = require('./googleSheetsService');
 
 // 修正路徑
 const csvPath = path.join(__dirname, '../../data/guests.csv');
@@ -37,10 +38,10 @@ const tableNames = {
 };
 
 /**
- * 載入賓客資料
+ * 從CSV載入賓客資料
  * @returns {Map} 賓客姓名與桌號的映射
  */
-function loadGuests() {
+function loadGuestsFromCsv() {
   try {
     const data = fs.readFileSync(csvPath, 'utf8');
     const lines = data.trim().split('\n');
@@ -53,8 +54,28 @@ function loadGuests() {
     }
     return guests;
   } catch (error) {
-    console.error('載入賓客資料失敗:', error);
+    console.error('載入CSV賓客資料失敗:', error);
     return new Map();
+  }
+}
+
+/**
+ * 載入賓客資料 (從Google Sheets或CSV)
+ * @param {boolean} forceRefresh - 是否強制刷新Google Sheets資料
+ * @returns {Promise<Map>} 賓客姓名與桌號的映射
+ */
+async function loadGuests(forceRefresh = false) {
+  // 檢查是否啟用Google Sheets
+  if (config.googleSheets.enabled) {
+    try {
+      return await googleSheetsService.getGuests(forceRefresh);
+    } catch (error) {
+      console.error('從Google Sheets載入失敗，嘗試從CSV載入:', error);
+      return loadGuestsFromCsv(); // 備用方案
+    }
+  } else {
+    // 使用CSV文件
+    return loadGuestsFromCsv();
   }
 }
 
@@ -72,10 +93,10 @@ function getTableImageUrl(tableNumber) {
 /**
  * 根據姓名查詢座位
  * @param {string} name - 賓客姓名
- * @returns {Object} 查詢結果，包含成功狀態、訊息和桌次圖片URL
+ * @returns {Promise<Object>} 查詢結果，包含成功狀態、訊息和桌次圖片URL
  */
-function querySeat(name) {
-  const guests = loadGuests();
+async function querySeat(name) {
+  const guests = await loadGuests();
   if (guests.has(name)) {
     const table = guests.get(name);
     const tableImagePath = path.join(tableImagesDir, `table_${table}.png`);
@@ -99,4 +120,15 @@ function querySeat(name) {
   }
 }
 
-module.exports = { loadGuests, querySeat }; 
+/**
+ * 清除賓客資料緩存，強制下次查詢時從資料源重新獲取
+ * @returns {boolean} 操作是否成功
+ */
+function clearCache() {
+  if (config.googleSheets.enabled) {
+    return googleSheetsService.clearCache();
+  }
+  return false; // CSV模式沒有緩存機制
+}
+
+module.exports = { loadGuests, querySeat, clearCache }; 

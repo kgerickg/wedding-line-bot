@@ -11,6 +11,11 @@ yarn-error.log
 .env.test
 .env.production
 .env.yaml
+.env.*
+!.env.example
+
+# Google Cloud 服務帳號密鑰
+config/service-account-key.json
 
 # IDE與編輯器
 .idea/

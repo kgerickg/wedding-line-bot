@@ -30,6 +30,18 @@ module.exports = {
     baseUrl: process.env.HOST_URL || 'http://localhost:3000'
   },
   
+  // Google Sheets 配置
+  googleSheets: {
+    // Google API 服務帳號金鑰文件路徑
+    keyFilePath: process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, '../config/service-account-key.json'),
+    // Google Sheets文件ID（從URL獲取）
+    spreadsheetId: process.env.SHEETS_ID || '',
+    // 數據範圍（工作表名稱和範圍）
+    range: process.env.SHEETS_RANGE || 'guests!A:B',
+    // 是否啟用Google Sheets（如果為false，則使用本地CSV）
+    enabled: process.env.USE_GOOGLE_SHEETS === 'true'
+  },
+  
   // 查詢限制配置
   queryLimit: {
     // 每個用戶每日最大查詢次數
