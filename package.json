@@ -2,7 +2,7 @@
   "name": "wedding-line-bot",
   "version": "1.0.0",
   "description": "婚禮Line Bot座位查詢和照片功能",
-  "main": "server.js",
+  "main": "index.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",

@@ -11,7 +11,7 @@ const photosDir = path.join(__dirname, '../../data/pictures');
 const useImgur = config.imgur.enabled; // 是否使用 Imgur API
 const imgurClientId = config.imgur.clientId; // Imgur API Client ID
 const imgurAlbumHash = config.imgur.albumHash; // Imgur 相簿雜湊值
-const CACHE_REFRESH_INTERVAL = 3600000; // 快取更新間隔，預設 1 小時 (3600000 毫秒)
+const CACHE_REFRESH_INTERVAL = 43200000; // 快取更新間隔，調整為 12 小時 (43200000 毫秒)
 
 // Imgur 照片快取
 let imgurPhotosCache = [];

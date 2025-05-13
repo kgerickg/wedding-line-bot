@@ -2,6 +2,8 @@
 // 從Google Sheets API讀取賓客資料
 const { google } = require('googleapis');
 const config = require('../../config');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * 創建Google Sheets API客戶端
@@ -9,10 +11,26 @@ const config = require('../../config');
  */
 async function getSheetClient() {
   // 使用服務帳號認證
-  const auth = new google.auth.GoogleAuth({
-    keyFile: config.googleSheets.keyFilePath,
+  const authOptions = {
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-  });
+  };
+
+  // 在 GCF/Cloud Run 環境中，如果服務帳號已正確設定給該服務，通常不需要 keyFile
+  // GOOGLE_APPLICATION_CREDENTIALS 環境變數會被自動偵測 (如果你設定了它指向一個有效的金鑰檔並部署了該檔案)
+  // 或者，函式本身運行的服務帳號若有權限，則無需任何額外 keyFile 設定。
+  // 此處保留 keyFile 的邏輯，主要用於本地開發或當 GOOGLE_APPLICATION_CREDENTIALS 未自動生效時的備用。
+  if (config.googleSheets.keyFilePath && fs.existsSync(config.googleSheets.keyFilePath)) {
+    // 確保 keyFilePath 是一個相對於專案根目錄的有效路徑，或者是一個絕對路徑
+    // 例如，如果 keyFile 在 config/service-account-key.json
+    // 且 googleSheetsService.js 在 src/services/，那麼 keyFilePath 應該是 '../../config/service-account-key.json' 或類似
+    // 最好在 config.js 中就設定好正確的相對路徑或絕對路徑
+    authOptions.keyFile = path.resolve(__dirname, '../../', config.googleSheets.keyFilePath); // 假設 keyFilePath 是相對於專案根目錄的路徑
+    console.log(`Using keyFile for Google Sheets: ${authOptions.keyFile}`);
+  } else {
+    console.log('Attempting to use default credentials for Google Sheets (e.g., from GCF service account or GOOGLE_APPLICATION_CREDENTIALS env var).');
+  }
+
+  const auth = new google.auth.GoogleAuth(authOptions);
   
   const client = await auth.getClient();
   return google.sheets({ version: 'v4', auth: client });
@@ -56,7 +74,7 @@ async function loadGuestsFromSheet() {
 
 // 記憶體cache，避免頻繁API調用
 let guestsCache = null;
-const CACHE_TTL = 5 * 60 * 1000; // cache有效期5分鐘
+const CACHE_TTL = 30 * 60 * 1000; // cache有效期30分鐘
 
 /**
  * 獲取賓客資料，優先從cache獲取

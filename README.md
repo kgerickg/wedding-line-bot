@@ -24,6 +24,9 @@ marraige/
 │   ├── guests.csv          # 賓客名單和座位資料
 │   ├── pictures/           # 婚紗照片目錄
 │   └── tables/             # 桌次圖目錄
+├── deployment/             # 部署腳本目錄
+│   ├── cloud-deploy.sh     # 完整部署腳本
+│   └── redeploy.sh         # 快速重新部署腳本
 ├── docs/                   # 文件目錄
 │   ├── 需求說明.md          # 專案需求文件
 │   ├── google_sheets_setup.md # Google Sheets整合指南
@@ -131,15 +134,17 @@ node scripts/cli.js
 
 ### 部署至Google Cloud Functions
 
+首次部署或需要完整初始設定時，請執行：
 ```bash
 # 確保已安裝 Google Cloud CLI 並登入
+# 執行完整部署腳本 (包含初始設定)
+bash deployment/cloud-deploy.sh
+```
 
-# 部署函數
-gcloud functions deploy weddingLineBot \
-  --runtime nodejs16 \
-  --trigger-http \
-  --allow-unauthenticated \
-  --env-vars-file .env.yaml
+若您已經完成過初始設定，後續僅需更新程式碼並重新部署，可執行：
+```bash
+# 執行快速重新部署腳本
+bash deployment/redeploy.sh
 ```
 
 ### 設定Line Webhook URL

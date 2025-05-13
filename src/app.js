@@ -54,6 +54,17 @@ app.post('/callback', line.middleware(configLine), (req, res) => {
     });
 });
 
+// 也支持根路徑webhook (for Cloud Functions)
+app.post('/', line.middleware(configLine), (req, res) => {
+  Promise
+    .all(req.body.events.map(handleEvent))
+    .then((result) => res.json(result))
+    .catch((err) => {
+      console.error(err);
+      res.status(500).end();
+    });
+});
+
 // 處理LINE事件
 async function handleEvent(event) {
   if (event.type !== 'message' && event.type !== 'postback') {
@@ -286,5 +297,5 @@ async function handleSeatQuery(userId, name, replyToken) {
 // 注冊路由
 app.use('/api/tables', tableRoutes);
 
-// 匯出應用
-module.exports = app; 
+console.log('SRC_APP_JS: Attempting to export weddingLineBot RIGHT NOW!');
+exports.weddingLineBot = app; 
