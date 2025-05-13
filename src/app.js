@@ -97,6 +97,23 @@ async function handleEvent(event) {
       }
     }
     
+    // 關鍵字 - 清除照片快取
+    if (text === 'clearPhotoCache') {
+      try {
+        const result = await photoService.refreshImgurCache();
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: `照片快取已更新: ${result.message}\nPhoto cache refreshed: ${result.message}`
+        });
+      } catch (error) {
+        console.error('清除照片快取指令執行失敗:', error);
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: `無法更新照片快取: ${error.message}\nFailed to refresh photo cache: ${error.message}`
+        });
+      }
+    }
+    
     // 關鍵字處理
     if (text === '座位查詢' || text === 'Seat Lookup') {
       return client.replyMessage(event.replyToken, getSeatLookupInstructions());
@@ -157,32 +174,41 @@ function getSeatLookupInstructions() {
 
 // 處理婚紗照請求
 async function handlePhotoRequest(replyToken) {
-  const photoResult = photoService.getRandomPhoto();
-  
-  if (!photoResult.success) {
-    return client.replyMessage(replyToken, {
-      type: 'text',
-      text: photoResult.message
-    });
-  }
-  
-  // 使用 ngrok 的公開網址提供圖片
-  // 獲取 ngrok 的公開網址（這裡需要手動填寫當前 ngrok 的網址）
-  const ngrokUrl = process.env.NGROK_URL || 'https://your-ngrok-url.ngrok-free.app';
-  
   try {
-    // 修正：移除URL末尾的斜線以避免重複
-    const baseUrl = ngrokUrl.endsWith('/') ? ngrokUrl.slice(0, -1) : ngrokUrl;
+    // 獲取照片資訊（現在是異步操作）
+    const photoResult = await photoService.getRandomPhoto();
     
-    // 建立圖片的公開網址
-    const imageUrl = `${baseUrl}/pictures/${encodeURIComponent(photoResult.fileName)}`;
+    if (!photoResult.success) {
+      return client.replyMessage(replyToken, {
+        type: 'text',
+        text: photoResult.message
+      });
+    }
     
-    // 只發送圖片，不發送文字
-    return client.replyMessage(replyToken, {
-      type: 'image',
-      originalContentUrl: imageUrl,
-      previewImageUrl: imageUrl
-    });
+    // 檢查是來自 Imgur 還是本地照片
+    if (photoResult.url) {
+      // Imgur 照片情況 - 直接使用 Imgur 提供的 URL
+      return client.replyMessage(replyToken, {
+        type: 'image',
+        originalContentUrl: photoResult.url,
+        previewImageUrl: photoResult.url
+      });
+    } else {
+      // 本地照片情況 - 使用 ngrok 的公開網址提供圖片
+      const ngrokUrl = process.env.NGROK_URL || 'https://your-ngrok-url.ngrok-free.app';
+      
+      // 修正：移除URL末尾的斜線以避免重複
+      const baseUrl = ngrokUrl.endsWith('/') ? ngrokUrl.slice(0, -1) : ngrokUrl;
+      
+      // 建立圖片的公開網址
+      const imageUrl = `${baseUrl}/pictures/${encodeURIComponent(photoResult.fileName)}`;
+      
+      return client.replyMessage(replyToken, {
+        type: 'image',
+        originalContentUrl: imageUrl,
+        previewImageUrl: imageUrl
+      });
+    }
   } catch (error) {
     console.error('照片處理失敗:', error);
     return client.replyMessage(replyToken, {

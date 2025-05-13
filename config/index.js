@@ -42,6 +42,16 @@ module.exports = {
     enabled: process.env.USE_GOOGLE_SHEETS === 'true'
   },
   
+  // Imgur API 配置
+  imgur: {
+    // 是否啟用 Imgur 照片功能
+    enabled: process.env.USE_IMGUR === 'true',
+    // Imgur API Client ID
+    clientId: process.env.IMGUR_CLIENT_ID || '',
+    // Imgur 相簿哈希值
+    albumHash: process.env.IMGUR_ALBUM_HASH || ''
+  },
+  
   // 查詢限制配置
   queryLimit: {
     // 每個用戶每日最大查詢次數
