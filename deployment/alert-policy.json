@@ -1,0 +1,39 @@
+{
+  "displayName": "婚禮 Line Bot 可用性警報",
+  "conditions": [
+    {
+      "displayName": "Uptime Check 失敗",
+      "conditionThreshold": {
+        "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" resource.type=\"uptime_url\" resource.label.\"project_id\"=\"YOUR_PROJECT_ID\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_NEXT_OLDER",
+            "crossSeriesReducer": "REDUCE_COUNT_FALSE"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "duration": "300s",
+        "trigger": {
+          "count": 1
+        },
+        "thresholdValue": 0
+      }
+    }
+  ],
+  "alertStrategy": {
+    "autoClose": "604800s",
+    "notificationRateLimit": {
+      "period": "3600s"
+    }
+  },
+  "combiner": "OR",
+  "notificationChannels": [
+    "projects/YOUR_PROJECT_ID/notificationChannels/YOUR_NOTIFICATION_CHANNEL_ID"
+  ],
+  "documentation": {
+    "content": "## 婚禮 Line Bot 服務中斷\n\n該警報表示婚禮 Line Bot 服務可能無法正常運行。\n\n### 建議操作\n\n1. 檢查 Cloud Run / App Engine 日誌\n2. 確認 LINE Webhook 設定是否正確\n3. 驗證服務存取 GCS 的權限",
+    "mimeType": "text/markdown"
+  },
+  "enabled": true
+} 

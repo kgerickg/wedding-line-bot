@@ -1,252 +1,219 @@
-// src/photoService.js
-// 提供婚紗照片功能，包含 Imgur API 和本地照片兩種模式，帶有快取機制
-
-const fs = require('fs');
-const path = require('path');
-const { ImgurClient } = require('imgur');
+// 引入 @google-cloud/storage
+const { Storage } = require('@google-cloud/storage');
 const config = require('../../config');
 
-// 配置參數
-const photosDir = path.join(__dirname, '../../data/pictures');
-const useImgur = config.imgur.enabled; // 是否使用 Imgur API
-const imgurClientId = config.imgur.clientId; // Imgur API Client ID
-const imgurAlbumHash = config.imgur.albumHash; // Imgur 相簿雜湊值
-const CACHE_REFRESH_INTERVAL = 43200000; // 快取更新間隔，調整為 12 小時 (43200000 毫秒)
-
-// Imgur 照片快取
-let imgurPhotosCache = [];
-let lastCacheUpdate = 0;
-let cacheUpdateInProgress = false;
-
-// 初始化 Imgur client
-let imgurClient = null;
-if (useImgur && imgurClientId) {
-  imgurClient = new ImgurClient({ clientId: imgurClientId });
-  
-  // 應用啟動時立即更新快取
-  updateImgurCache();
+// --- 加入偵錯日誌 ---
+console.log('[photoService] 正在讀取設定...');
+console.log('[photoService] config object:', JSON.stringify(config, null, 2));
+if (config && config.googleCloudStorage) {
+  console.log('[photoService] config.googleCloudStorage.enabled:', config.googleCloudStorage.enabled);
+  console.log('[photoService] config.googleCloudStorage.bucketName:', config.googleCloudStorage.bucketName);
+} else {
+  console.log('[photoService] config.googleCloudStorage 物件不存在。');
 }
+// --- 偵錯日誌結束 ---
+
+// 從設定檔讀取 GCS 設定
+const gcsBucketName = config.googleCloudStorage?.bucketName;
+const gcsKeyFile = config.googleCloudStorage?.keyFilename;
+const gcsProjectId = config.googleCloudStorage?.projectId;
+
+// GCS 照片快取
+let gcsPhotosCache = [];
+// 用戶已顯示照片記錄 - 以用戶ID為鍵
+const userDisplayedPhotos = new Map();
+
+// 初始化 GCS Client
+const storageClient = new Storage({
+  projectId: gcsProjectId,
+  keyFilename: gcsKeyFile,
+});
 
 /**
- * 更新 Imgur 照片快取
- * @returns {Promise<boolean>} 更新成功返回 true，失敗返回 false
+ * 啟動時同步載入所有照片清單
+ * @returns {Promise<number>} 載入的照片數量
  */
-async function updateImgurCache() {
-  // 避免同時有多個更新請求
-  if (cacheUpdateInProgress) {
-    return false;
-  }
-  
-  cacheUpdateInProgress = true;
-  
+async function preloadPhotosSync() {
   try {
-    if (!imgurClient || !imgurAlbumHash) {
-      throw new Error('Imgur 客戶端未配置或相簿 Hash 未提供');
+    console.log(`[photoService] 正在從 GCS 預載入照片 (Bucket: ${gcsBucketName})...`);
+    const [files] = await storageClient.bucket(gcsBucketName).getFiles();
+    
+    if (!files || files.length === 0) {
+      console.warn(`[photoService] GCS 儲存桶 ${gcsBucketName} 中沒有找到任何檔案。`);
+      gcsPhotosCache = [];
+      return 0;
     }
-    
-    console.log('正在更新 Imgur 照片快取...');
-    
-    // 獲取相簿中的所有照片
-    const albumResponse = await imgurClient.getAlbum(imgurAlbumHash);
-    
-    if (!albumResponse.success || !albumResponse.data || !albumResponse.data.images || albumResponse.data.images.length === 0) {
-      throw new Error('無法獲取 Imgur 相簿照片');
-    }
-    
-    // 更新快取
-    imgurPhotosCache = albumResponse.data.images.map(image => ({
-      url: image.link,
-      title: image.description || '婚紗照',
-      width: image.width,
-      height: image.height
-    }));
-    
-    lastCacheUpdate = Date.now();
-    console.log(`Imgur 照片快取更新成功，共 ${imgurPhotosCache.length} 張照片`);
-    return true;
+
+    gcsPhotosCache = files
+      .filter(file => /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name))
+      .map(file => ({
+        url: `https://storage.googleapis.com/${gcsBucketName}/${file.name}`,
+        title: file.name,
+        updated: file.metadata.updated,
+        contentType: file.metadata.contentType,
+        size: Number(file.metadata.size),
+      }));
+
+    console.log(`[photoService] 預載入 GCS 完成，共 ${gcsPhotosCache.length} 張照片`);
+    return gcsPhotosCache.length;
   } catch (error) {
-    console.error('更新 Imgur 照片快取失敗:', error);
-    return false;
-  } finally {
-    cacheUpdateInProgress = false;
+    console.error(`[photoService] 從 GCS 預載入照片失敗:`, error);
+    return 0;
   }
 }
 
 /**
- * 檢查快取是否需要更新
- * @returns {boolean} 需要更新返回 true
+ * 獲取特定用戶的已顯示照片集合
+ * @param {string} userId 用戶ID
+ * @returns {Set<string>} 用戶的已顯示照片集合
  */
-function shouldUpdateCache() {
-  // 如果快取為空或已過期則更新
-  return imgurPhotosCache.length === 0 || (Date.now() - lastCacheUpdate > CACHE_REFRESH_INTERVAL);
-}
-
-/**
- * 從 Imgur 相簿快取獲取隨機照片
- * @returns {Promise<Object>} 照片資訊
- */
-async function getRandomPhotoFromImgurCache() {
-  try {
-    // 檢查是否需要更新快取
-    if (shouldUpdateCache()) {
-      // 在背景更新快取，不等待結果
-      updateImgurCache().catch(err => console.error('背景更新 Imgur 快取失敗:', err));
-    }
-    
-    // 如果快取為空，進行一次同步更新
-    if (imgurPhotosCache.length === 0) {
-      const updated = await updateImgurCache();
-      if (!updated || imgurPhotosCache.length === 0) {
-        throw new Error('Imgur 照片快取為空且無法更新');
-      }
-    }
-    
-    // 從快取中隨機選擇一張照片
-    const randomIndex = Math.floor(Math.random() * imgurPhotosCache.length);
-    const randomPhoto = imgurPhotosCache[randomIndex];
-    
-    return {
-      success: true,
-      url: randomPhoto.url,
-      title: randomPhoto.title,
-      message: `婚紗照片: ${randomPhoto.title}\nWedding Photo: ${randomPhoto.title}`
-    };
-  } catch (error) {
-    console.error('從 Imgur 快取獲取照片失敗:', error);
-    // 如果快取方式失敗，嘗試直接從 API 獲取
-    return getRandomPhotoFromImgurDirect();
+function getUserDisplayedPhotos(userId) {
+  // 如果這個用戶還沒有記錄，則創建一個空集合
+  if (!userDisplayedPhotos.has(userId)) {
+    userDisplayedPhotos.set(userId, new Set());
   }
+  return userDisplayedPhotos.get(userId);
 }
 
 /**
- * 直接從 Imgur API 獲取隨機照片（不使用快取）
- * @returns {Promise<Object>} 照片資訊
+ * 從快取中獲取未顯示過的照片，針對特定用戶
+ * @param {number} count 需要的照片數量
+ * @param {string} userId 用戶ID，默認為 'default'
+ * @returns {Array<Object>} 照片物件陣列
  */
-async function getRandomPhotoFromImgurDirect() {
-  try {
-    if (!imgurClient || !imgurAlbumHash) {
-      throw new Error('Imgur 客戶端未配置或相簿hash未提供');
-    }
-    
-    // 獲取相簿中的所有照片
-    const albumResponse = await imgurClient.getAlbum(imgurAlbumHash);
-    
-    if (!albumResponse.success || !albumResponse.data || !albumResponse.data.images || albumResponse.data.images.length === 0) {
-      throw new Error('無法獲取 Imgur 相簿照片');
-    }
-    
-    const images = albumResponse.data.images;
-    const randomIndex = Math.floor(Math.random() * images.length);
-    const randomImage = images[randomIndex];
-    
-    // 從描述中提取標題，若無描述則使用預設標題
-    const title = randomImage.description || '婚紗照';
-    
-    return {
-      success: true,
-      url: randomImage.link, // Imgur 提供的圖片 URL
-      title: title,
-      message: `婚紗照片: ${title}\nWedding Photo: ${title}`
-    };
-  } catch (error) {
-    console.error('直接從 Imgur 獲取照片失敗:', error);
-    return { success: false, error };
-  }
-}
-
-/**
- * 獲取所有本地照片文件名稱
- * @returns {Array<string>} 照片文件名陣列
- */
-function getAllLocalPhotos() {
-  try {
-    // 只選取支援的圖片格式
-    return fs.readdirSync(photosDir).filter(file => {
-      const ext = path.extname(file).toLowerCase();
-      return ['.jpg', '.jpeg', '.png'].includes(ext);
-    });
-  } catch (error) {
-    console.error('讀取本地照片目錄失敗:', error);
+function getPhotos(count = 10, userId = 'default') {
+  if (gcsPhotosCache.length === 0) {
+    console.warn('[photoService] 照片快取為空，無法提供照片');
     return [];
   }
-}
-
-/**
- * 獲取隨機本地照片的完整路徑
- * @returns {string|null} 隨機照片的路徑，失敗則返回null
- */
-function getRandomLocalPhotoPath() {
-  const photos = getAllLocalPhotos();
-  if (photos.length === 0) {
-    return null;
+  
+  // 獲取該用戶的已顯示照片記錄
+  const userPhotosSet = getUserDisplayedPhotos(userId);
+  
+  // 找出該用戶未顯示過的照片
+  const unseenPhotos = gcsPhotosCache.filter(photo => !userPhotosSet.has(photo.url));
+  
+  // 如果未顯示照片不足，或者已經顯示完所有照片，重置該用戶的記錄
+  if (unseenPhotos.length < count || unseenPhotos.length === 0) {
+    console.log(`[photoService] 用戶 ${userId} 已看過所有照片，重置記錄`);
+    userPhotosSet.clear(); // 只清除該用戶的記錄
+    
+    // 重置後，所有照片對該用戶都可用
+    const shuffled = [...gcsPhotosCache].sort(() => 0.5 - Math.random());
+    const selected = shuffled.slice(0, count);
+    
+    // 更新該用戶的已顯示照片集合
+    selected.forEach(photo => userPhotosSet.add(photo.url));
+    return selected;
   }
   
-  const randomIndex = Math.floor(Math.random() * photos.length);
-  const randomPhoto = photos[randomIndex];
-  return path.join(photosDir, randomPhoto);
+  // 從未顯示過的照片中隨機選擇
+  const shuffledUnseen = [...unseenPhotos].sort(() => 0.5 - Math.random());
+  const selected = shuffledUnseen.slice(0, count);
+  
+  // 更新該用戶的已顯示照片集合
+  selected.forEach(photo => userPhotosSet.add(photo.url));
+  console.log(`[photoService] 為用戶 ${userId} 提供 ${selected.length} 張未重複照片，已顯示過 ${userPhotosSet.size}/${gcsPhotosCache.length} 張`);
+  
+  return selected;
 }
 
 /**
- * 從本地獲取隨機照片
- * @returns {Object} 照片資訊物件
+ * 手動重新載入照片
+ * @returns {Promise<Object>} 包含成功狀態和載入的照片數量
  */
-function getRandomLocalPhoto() {
-  const photoPath = getRandomLocalPhotoPath();
+async function reloadPhotos() {
+  try {
+    const count = await preloadPhotosSync();
+    // 重載照片時清空所有用戶的顯示記錄
+    userDisplayedPhotos.clear();
+    return {
+      success: true,
+      count: count,
+      message: `成功重新載入 ${count} 張照片，已重置所有用戶的顯示記錄`
+    };
+  } catch (error) {
+    return {
+      success: false,
+      count: 0,
+      message: `重新載入照片失敗: ${error.message}`
+    };
+  }
+}
+
+/**
+ * 獲取多張照片資訊，用於輪播 (Carousel)
+ * @param {number} [count=10] 需要的照片數量 (上限為 10，Line Carousel 官方限制)
+ * @param {string} [userId='default'] 用戶ID 
+ * @returns {Object} 包含照片陣列 { success: boolean, photos: Array }
+ */
+function getPhotosForCarousel(count = 10, userId = 'default') {
+  const desiredCount = Math.min(Math.max(1, count), 10);
+  const photos = getPhotos(desiredCount, userId);
   
-  if (!photoPath) {
-    return { 
-      success: false, 
-      message: '無法獲取照片。\nUnable to get wedding photo.' 
+  if (photos.length === 0) {
+    return {
+      success: false,
+      photos: [],
+      message: '無法獲取任何照片用於輪播。'
     };
   }
   
-  const fileName = path.basename(photoPath);
-  // 去除副檔名以取得照片名稱（作為標題使用）
-  const title = path.parse(fileName).name;
+  // 格式化照片資訊以符合 Line Carousel Template 需求
+  const carouselPhotos = photos.map(p => ({
+    title: (p.title || '照片').substring(0, 40),
+    text: (p.title || '照片').substring(0, 60),
+    thumbnailImageUrl: p.url,
+    originalUrl: p.url
+  }));
   
   return {
     success: true,
-    path: photoPath,
-    fileName: fileName,
-    title: title,
-    message: `婚紗照片: ${title}\nWedding Photo: ${title}`
+    photos: carouselPhotos
   };
 }
 
 /**
- * 隨機取得一張照片並返回照片資訊（優先從 Imgur 獲取，失敗時使用本地照片）
- * @returns {Promise<Object>} 照片資訊物件
+ * 重置特定用戶的照片顯示記錄
+ * @param {string} userId 用戶ID
+ * @returns {boolean} 是否成功重置
  */
-async function getRandomPhoto() {
-  if (useImgur && imgurClient) {
-    try {
-      // 使用快取方式獲取照片（優先）
-      const imgurPhoto = await getRandomPhotoFromImgurCache();
-      if (imgurPhoto.success) {
-        return imgurPhoto;
-      }
-      console.log('從 Imgur 快取獲取照片失敗，改用本地照片');
-    } catch (error) {
-      console.error('Imgur 照片處理錯誤:', error);
-    }
+function resetUserPhotoHistory(userId) {
+  if (userDisplayedPhotos.has(userId)) {
+    userDisplayedPhotos.get(userId).clear();
+    return true;
   }
-  
-  // 使用本地照片（作為備選或主要方式）
-  return getRandomLocalPhoto();
+  return false;
 }
 
-// 手動刷新快取的函數，可在需要時調用
-async function refreshImgurCache() {
-  const result = await updateImgurCache();
+/**
+ * 取得特定用戶的已顯示照片統計資訊
+ * @param {string} userId 用戶ID
+ * @returns {Object} 統計資訊
+ */
+function getUserDisplayedStats(userId = 'default') {
+  const userPhotosSet = getUserDisplayedPhotos(userId);
   return {
-    success: result,
-    message: result 
-      ? `快取更新成功，共 ${imgurPhotosCache.length} 張照片` 
-      : '快取更新失敗，請檢查 Imgur 配置和網絡連接'
+    userId: userId,
+    total: gcsPhotosCache.length,
+    displayed: userPhotosSet.size,
+    remaining: gcsPhotosCache.length - userPhotosSet.size,
+    completedCycles: Math.floor(userPhotosSet.size / gcsPhotosCache.length)
   };
 }
 
+// 啟動時預載入照片
+(async () => {
+  console.log('[photoService] 準備預載入照片...');
+  await preloadPhotosSync();
+  // 這裡可以加入應用程式啟動邏輯
+  // require('./start-app.js')
+})();
+
 module.exports = { 
-  getRandomPhoto,
-  refreshImgurCache  // 導出刷新快取功能，可供外部調用
+  getPhotos,
+  reloadPhotos,
+  getPhotosForCarousel,
+  resetUserPhotoHistory,
+  getUserDisplayedStats
 }; 

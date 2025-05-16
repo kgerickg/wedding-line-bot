@@ -1,0 +1,14 @@
+runtime: nodejs18
+service: wedding-line-bot
+
+env_variables:
+  LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN}
+  LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET}
+  PORT: 8080
+  NODE_ENV: production
+  
+handlers:
+  - url: /.*
+    script: auto
+
+instance_class: F2 
