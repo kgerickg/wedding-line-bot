@@ -110,8 +110,6 @@ async function handleEvent(event) {
       return handlePhotoRequest(event.replyToken, event);
     }
   }
-  console.log('EVENT_HANDLER: Message type not text, or unhandled case. Replying with menu.');
-  return client.replyMessage(event.replyToken, getMenuMessage());
 }
 
 async function handlePhotoRequest(replyToken, event) {
